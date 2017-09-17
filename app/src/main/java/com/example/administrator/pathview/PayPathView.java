@@ -3,6 +3,7 @@ package com.example.administrator.pathview;
 import android.animation.Animator;
 import android.animation.ValueAnimator;
 import android.content.Context;
+import android.content.res.TypedArray;
 import android.graphics.Canvas;
 import android.graphics.Color;
 import android.graphics.Paint;
@@ -13,7 +14,9 @@ import android.os.Message;
 import android.support.annotation.Nullable;
 import android.util.AttributeSet;
 import android.util.Log;
+import android.util.TypedValue;
 import android.view.View;
+import android.widget.MediaController;
 import android.widget.Toast;
 
 import java.util.ArrayList;
@@ -32,23 +35,31 @@ public class PayPathView extends View {
 
     Paint mPaint;
 
-    public static final int NEED_PAY_COUNT = 3;//执行支付动画需要的次数
-
     private boolean isPayingEnd = false;//支付动画是否结束，根据payingCount这个参数决定
 
     private int payingCount;//执行支付动画的次数
+
+    private int payingCountNums;//需要执行支付动画的总次数
+
+    private int stroke_width;//画笔的宽度
+
+    private int stroke_color;//画笔的颜色
+
+    private int rightPathColor;//勾路径的颜色
+
+    private int errorPathColor;//叉号路径的颜色
+
+    private boolean isAutoExit;//是否播放退出动画,默认为false
+
+    private boolean isPlayingTogether;//动画是否一起播放，默认为false
 
     private int mViewWidth;//view的宽度
 
     private int mViewHeight;//view的高度
 
-    private int animationDuration = 1000;//动画时间
+    private int animationDuration = 1000;//动画时间,默认为一秒
 
     private int animatorType = -1;//动画类型 0代表播放成功动画，1代表播放失败动画
-
-    private int playType = 0;//播放类型，分开播放或者一起播放 0是分开播放，1是一起播放
-
-    private boolean autoExit = false;//是否播放自动退出动画
 
     Path circlePath;//圆形路径
 
@@ -74,7 +85,7 @@ public class PayPathView extends View {
 
     ValueAnimator failureAnimation;//失败支付的动画
 
-    ValueAnimator successExitAnimation;//还原动画
+    ValueAnimator exitAnimation;//还原动画
 
     private float animatorValue = 0f;//记录动画过程中的中间值
 
@@ -102,7 +113,22 @@ public class PayPathView extends View {
     }
 
     public PayPathView(Context context, @Nullable AttributeSet attrs) {
-        super(context, attrs);
+        this(context, attrs, 0);
+    }
+
+    public PayPathView(Context context, @Nullable AttributeSet attrs, int defStyleAttr) {
+        super(context, attrs, defStyleAttr);
+        TypedArray array = context.obtainStyledAttributes(attrs, R.styleable.PayPathView, defStyleAttr, 0);
+        stroke_width = array.getDimensionPixelSize(R.styleable.PayPathView_stroke_width,
+                (int) TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_DIP, 10, getResources().getDisplayMetrics()));
+        stroke_color = array.getColor(R.styleable.PayPathView_stroke_color, Color.WHITE);
+        rightPathColor = array.getColor(R.styleable.PayPathView_right_path_color, Color.WHITE);
+        errorPathColor = array.getColor(R.styleable.PayPathView_error_path_color, Color.WHITE);
+        payingCountNums = array.getInteger(R.styleable.PayPathView_paying_count, 3);
+        isPlayingTogether = array.getBoolean(R.styleable.PayPathView_play_together, false);
+        animatorType = array.getInt(R.styleable.PayPathView_animator_type, 0);
+        animationDuration = array.getInt(R.styleable.PayPathView_animator_duration, 1000);
+        isAutoExit = array.getBoolean(R.styleable.PayPathView_auto_exit, false);
         initView();
     }
 
@@ -124,8 +150,8 @@ public class PayPathView extends View {
         mPaint = new Paint();
         mPaint.setAntiAlias(true);
         mPaint.setStyle(Paint.Style.STROKE);
-        mPaint.setStrokeWidth(10);
-        mPaint.setColor(Color.WHITE);
+        mPaint.setStrokeWidth(stroke_width);
+        mPaint.setColor(stroke_color);
     }
 
     /**
@@ -172,8 +198,14 @@ public class PayPathView extends View {
 
             @Override
             public void onAnimationEnd(Animator animation) {
-                Log.i("test","end...");
                 mHandler.sendEmptyMessage(0);
+                if (!isAutoExit && (mCurrentState == SUCCESS || mCurrentState == FAILURE)) {
+                    if (isPlayingTogether || (!isPlayingTogether && mCurPathIndex == pathList.size() - 1)) {
+                        if (null != mFinishListener) {
+                            mFinishListener.finish(animatorType);
+                        }
+                    }
+                }
             }
 
             @Override
@@ -203,17 +235,17 @@ public class PayPathView extends View {
         payingAnimation = ValueAnimator.ofFloat(0, 1).setDuration(animationDuration);
         successAnimation = ValueAnimator.ofFloat(0, 1).setDuration(animationDuration);
         failureAnimation = ValueAnimator.ofFloat(0, 1).setDuration(animationDuration);
-        successExitAnimation = ValueAnimator.ofFloat(1, 0).setDuration(animationDuration);
+        exitAnimation = ValueAnimator.ofFloat(1, 0).setDuration(animationDuration);
 
         payingAnimation.addListener(mAnimationListener);
         successAnimation.addListener(mAnimationListener);
         failureAnimation.addListener(mAnimationListener);
-        successExitAnimation.addListener(mAnimationListener);
+        exitAnimation.addListener(mAnimationListener);
 
         payingAnimation.addUpdateListener(mUpdateListener);
         successAnimation.addUpdateListener(mUpdateListener);
         failureAnimation.addUpdateListener(mUpdateListener);
-        successExitAnimation.addUpdateListener(mUpdateListener);
+        exitAnimation.addUpdateListener(mUpdateListener);
 
     }
 
@@ -231,11 +263,10 @@ public class PayPathView extends View {
                         break;
                     case PAYING:
                         if (!isPayingEnd) {
-                            Log.i("test","count==" + payingCount);
                             initAnimation();
                             payingAnimation.start();
                             payingCount++;
-                            if (payingCount >= NEED_PAY_COUNT - 1) {
+                            if (payingCount >= payingCountNums - 1) {
                                 isPayingEnd = true;
                             }
                         } else {
@@ -251,7 +282,7 @@ public class PayPathView extends View {
                         break;
                     case SUCCESS:
                     case FAILURE:
-                        if (mCurPathIndex < pathList.size() - 1 && playType == 0) {//拆分的路径动画还没播放完
+                        if (mCurPathIndex < pathList.size() - 1 && !isPlayingTogether) {///拆分的路径动画还没播放完
                             mCurPathIndex++;
                             initAnimation();
                             if (0 == animatorType) {//成功
@@ -261,9 +292,9 @@ public class PayPathView extends View {
                             }
                         } else {//拆分的路径动画播放完或者是一起播放类型
                             initAnimation();
-                            if (autoExit) {
+                            if (isAutoExit) {
                                 mCurrentState = EXIT;
-                                successExitAnimation.start();
+                                exitAnimation.start();
                             }
                         }
                         break;
@@ -271,9 +302,11 @@ public class PayPathView extends View {
                         if (mCurPathIndex > 0) {
                             mCurPathIndex--;
                             initAnimation();
-                            successExitAnimation.start();
+                            exitAnimation.start();
                         } else {
-                            Toast.makeText(getContext(), "支付成功~", Toast.LENGTH_SHORT).show();
+                            if (null != mFinishListener) {
+                                mFinishListener.finish(animatorType);
+                            }
                         }
                 }
             }
@@ -307,9 +340,11 @@ public class PayPathView extends View {
         canvas.translate(mViewWidth / 2, mViewHeight / 2);
         canvas.drawColor(Color.parseColor("#0082D7"));
         if (mCurrentState == FAILURE || (mCurrentState == EXIT && animatorType == 1)) {
-            mPaint.setColor(Color.RED);
+            mPaint.setColor(errorPathColor);
+        } else if (mCurrentState == SUCCESS || (mCurrentState == EXIT && animatorType == 0)) {
+            mPaint.setColor(rightPathColor);
         } else {
-            mPaint.setColor(Color.WHITE);
+            mPaint.setColor(stroke_color);
         }
 
         switch (mCurrentState) {
@@ -325,27 +360,27 @@ public class PayPathView extends View {
                 canvas.drawPath(dst, mPaint);
                 break;
             case SUCCESS:
-                if (0 == playType) {//分开播放
+                if (!isPlayingTogether) {//不一起播放
                     drawAnimatorValuePartPath(canvas);
-                } else if (1 == playType) {//一起播放
-                    drawAnimatorValueTogetherPath(canvas,successPath);
+                } else {//一起播放
+                    drawAnimatorValueTogetherPath(canvas, successPath);
                 }
                 break;
             case FAILURE:
-                if (0 == playType) {
+                if (!isPlayingTogether) {
                     drawAnimatorValuePartPath(canvas);
-                } else if (1 == playType) {
-                    drawAnimatorValueTogetherPath(canvas,failurePath);
+                } else {
+                    drawAnimatorValueTogetherPath(canvas, failurePath);
                 }
                 break;
             case EXIT:
-                if (0 == playType) {
+                if (!isPlayingTogether) {
                     drawAnimatorValuePartPath(canvas);
-                } else if (1 == playType) {
+                } else {
                     if (0 == animatorType) {//成功
-                        drawAnimatorValueTogetherPath(canvas,successPath);
+                        drawAnimatorValueTogetherPath(canvas, successPath);
                     } else if (1 == animatorType) {//失败
-                        drawAnimatorValueTogetherPath(canvas,failurePath);
+                        drawAnimatorValueTogetherPath(canvas, failurePath);
                     }
                 }
                 break;
@@ -355,7 +390,7 @@ public class PayPathView extends View {
     }
 
     /**
-     * 画路径
+     * 画路径（分开模式播放）
      *
      * @param canvas
      */
@@ -373,7 +408,13 @@ public class PayPathView extends View {
         canvas.drawPath(dst, mPaint);
     }
 
-    private void drawAnimatorValueTogetherPath(Canvas canvas,Path path){
+    /**
+     * 画路径（一起模式播放）
+     *
+     * @param canvas
+     * @param path
+     */
+    private void drawAnimatorValueTogetherPath(Canvas canvas, Path path) {
         mPathMeasure.setPath(path, false);
         while (mPathMeasure.nextContour()) {
             Path dsts = new Path();
@@ -390,16 +431,16 @@ public class PayPathView extends View {
      * @param animatorType
      */
     public void setAnimatorType(int animatorType) {
-        resetParams();
         this.animatorType = animatorType;
-        if (animatorType == 0) {//成功
-            pathList.add(circlePath);
-            pathList.add(rightPath);
-        } else if (animatorType == 1) {//失败
-            pathList.add(circlePath);
-            pathList.add(firstErrorPath);
-            pathList.add(secondErrorPath);
-        }
+    }
+
+    /**
+     * 设置是否播放模式
+     *
+     * @param isPlayingTogether
+     */
+    public void setPlayingTogether(boolean isPlayingTogether) {
+        this.isPlayingTogether = isPlayingTogether;
     }
 
     /**
@@ -408,7 +449,7 @@ public class PayPathView extends View {
      * @param exit
      */
     public void setAutoExit(boolean exit) {
-        this.autoExit = exit;
+        this.isAutoExit = exit;
     }
 
     /**
@@ -426,15 +467,48 @@ public class PayPathView extends View {
      * 播放动画，外部调用
      */
     public void start() {
+        resetParams();
         mCurrentState = PAYING;
+        if (animatorType == 0) {//成功
+            pathList.add(circlePath);
+            pathList.add(rightPath);
+        } else if (animatorType == 1) {//失败
+            pathList.add(circlePath);
+            pathList.add(firstErrorPath);
+            pathList.add(secondErrorPath);
+        }
         payingAnimation.start();
     }
 
     /**
-     * 设置播放类型
+     * 设置成功颜色
+     *
+     * @param successColor
      */
-    public void setPlayType(int playType) {
-        this.playType = playType;
+    public void setSuccessColor(int successColor) {
+        this.rightPathColor = successColor;
+    }
+
+    /**
+     * 设置失败颜色
+     *
+     * @param failureColor
+     */
+    public void setFailureColor(int failureColor) {
+        this.errorPathColor = failureColor;
+    }
+
+    /**
+     * 设置完成的回调监听
+     */
+    FinishListener mFinishListener;
+
+    interface FinishListener {
+        void finish(int state);
+    }
+
+    public void setOnFinishListener(FinishListener finishListener) {
+        this.mFinishListener = finishListener;
     }
 
 }

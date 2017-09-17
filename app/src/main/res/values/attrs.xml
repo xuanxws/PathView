@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+
+    <declare-styleable name="PayPathView">
+
+        <attr name="stroke_width" format="dimension"></attr>
+        <attr name="animator_duration" format="integer"></attr>
+        <attr name="stroke_color" format="color"></attr>
+        <attr name="paying_count" format="integer"/>
+        <attr name="right_path_color" format="color"/>
+        <attr name="error_path_color" format="color"/>
+        <attr name="play_together" format="boolean"/>
+        <attr name="auto_exit" format="boolean"></attr>
+        <attr name="animator_type">
+            <enum name="success_animator" value="0"/>
+            <enum name="failure_animator" value="1"/>
+        </attr>
+
+
+    </declare-styleable>
+</resources>
